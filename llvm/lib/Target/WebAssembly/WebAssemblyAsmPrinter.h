@@ -18,6 +18,22 @@
 namespace llvm {
 class WebAssemblyTargetStreamer;
 
+struct CodeAnnotation {
+  const MCSymbol* InstSym;
+  std::vector<char> Payload;
+  CodeAnnotation(const MCSymbol* InstSym, std::vector<char> Payload)
+    : InstSym(InstSym), Payload(std::move(Payload)) {
+  }
+};
+
+struct CodeAnnotationGroup {
+  const MCSymbol* FuncSym;
+  std::vector<CodeAnnotation> Annotations;
+  CodeAnnotationGroup(const MCSymbol* FuncSym): FuncSym(FuncSym)
+  {
+  }
+};
+
 class LLVM_LIBRARY_VISIBILITY WebAssemblyAsmPrinter final : public AsmPrinter {
   const WebAssemblySubtarget *Subtarget;
   const MachineRegisterInfo *MRI;
@@ -25,6 +41,7 @@ class LLVM_LIBRARY_VISIBILITY WebAssemblyAsmPrinter final : public AsmPrinter {
   // TODO: Do the uniquing of Signatures here instead of ObjectFileWriter?
   std::vector<std::unique_ptr<wasm::WasmSignature>> Signatures;
   std::vector<std::unique_ptr<std::string>> Names;
+  std::vector<CodeAnnotationGroup> Annotations;
   bool signaturesEmitted = false;
 
   StringRef storeName(StringRef Name) {
@@ -63,9 +80,11 @@ public:
   // AsmPrinter Implementation.
   //===------------------------------------------------------------------===//
 
+  void emitStartOfAsmFile(Module &M) override;
   void emitEndOfAsmFile(Module &M) override;
   void EmitProducerInfo(Module &M);
   void EmitTargetFeatures(Module &M);
+  void EmitCodeAnnotations(Module &M);
   void emitGlobalVariable(const GlobalVariable *GV) override;
   void emitJumpTableInfo() override;
   void emitConstantPool() override;

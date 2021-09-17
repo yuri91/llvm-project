@@ -16,6 +16,7 @@
 #include "WebAssemblyAsmPrinter.h"
 #include "MCTargetDesc/WebAssemblyMCTargetDesc.h"
 #include "MCTargetDesc/WebAssemblyTargetStreamer.h"
+#include "MCTargetDesc/WebAssemblyFixupKinds.h"
 #include "TargetInfo/WebAssemblyTargetInfo.h"
 #include "Utils/WebAssemblyTypeUtilities.h"
 #include "Utils/WebAssemblyUtilities.h"
@@ -409,6 +410,7 @@ void WebAssemblyAsmPrinter::emitEndOfAsmFile(Module &M) {
 
   EmitProducerInfo(M);
   EmitTargetFeatures(M);
+  EmitCodeAnnotations(M);
 }
 
 void WebAssemblyAsmPrinter::EmitProducerInfo(Module &M) {
@@ -518,6 +520,34 @@ void WebAssemblyAsmPrinter::EmitTargetFeatures(Module &M) {
   OutStreamer->PopSection();
 }
 
+void WebAssemblyAsmPrinter::emitStartOfAsmFile(Module &M) {
+}
+
+void WebAssemblyAsmPrinter::EmitCodeAnnotations(Module& M)
+{
+  MCSectionWasm *MySection = OutContext.getWasmSection(
+      ".custom_section.code_annotation.test", SectionKind::getMetadata());
+  OutStreamer->PushSection();
+  OutStreamer->SwitchSection(MySection);
+
+  OutStreamer->emitULEB128IntValue(Annotations.size());
+  for(auto& a: Annotations) {
+    MCFixupKind Kind = MCFixupKind(WebAssembly::fixup_uleb128_i32);
+    auto& Frag = cast<MCDataFragment>(MySection->getFragmentList().back());
+    uint32_t Offset = Frag.getContents().size();
+    OutStreamer->emitIntValue(0, 5);
+    Frag.getFixups().push_back(MCFixup::create(Offset, MCSymbolRefExpr::create(a.FuncSym, OutContext), Kind));
+    OutStreamer->emitULEB128IntValue(a.Annotations.size());
+    for (auto& o: a.Annotations) {
+        OutStreamer->emitAbsoluteSymbolDiffAsULEB128(o.InstSym, a.FuncSym);
+        OutStreamer->emitULEB128IntValue(o.Payload.size());
+        OutStreamer->emitBytes(StringRef(o.Payload.data(), o.Payload.size()));
+    }
+  }
+
+  OutStreamer->PopSection();
+}
+
 void WebAssemblyAsmPrinter::emitConstantPool() {
   assert(MF->getConstantPool()->getConstants().empty() &&
          "WebAssembly disables constant pools");
@@ -556,14 +586,17 @@ void WebAssemblyAsmPrinter::emitFunctionBodyStart() {
   if (MDNode *Idx = F.getMetadata("wasm.index")) {
     assert(Idx->getNumOperands() == 1);
 
-    getTargetStreamer()->emitIndIdx(AsmPrinter::lowerConstant(
-        cast<ConstantAsMetadata>(Idx->getOperand(0))->getValue()));
+    const MCExpr* IdxExpr = AsmPrinter::lowerConstant(
+            cast<ConstantAsMetadata>(Idx->getOperand(0))->getValue());
+    getTargetStreamer()->emitIndIdx(IdxExpr);
   }
 
   SmallVector<wasm::ValType, 16> Locals;
   valTypesFromMVTs(MFI->getLocals(), Locals);
   getTargetStreamer()->emitLocal(Locals);
 
+
+  Annotations.emplace_back(CurrentFnSym);
   AsmPrinter::emitFunctionBodyStart();
 }
 
@@ -607,6 +640,13 @@ void WebAssemblyAsmPrinter::emitInstruction(const MachineInstr *MI) {
     // This is a compiler barrier that prevents instruction reordering during
     // backend compilation, and should not be emitted.
     break;
+  case WebAssembly::BR_IF: {
+    MCSymbol* s = OutContext.createTempSymbol();
+    std::vector<char> payload = {'d','a','t','a'};
+    Annotations.back().Annotations.emplace_back(s, std::move(payload));
+    OutStreamer->emitLabel(s);
+    [[fallthrough]];
+  }
   default: {
     WebAssemblyMCInstLower MCInstLowering(OutContext, *this);
     MCInst TmpInst;
