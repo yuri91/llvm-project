@@ -1879,6 +1879,11 @@ uint64_t WasmObjectWriter::writeOneObject(MCAssembler &Asm,
                      TableElems);
     writeDataCountSection();
 
+    for (auto &CustomSection : CustomSections) {
+      if (CustomSection.Name.startswith("code_annotation.")) {
+        writeCustomSection(CustomSection, Asm, Layout);
+      }
+    }
     CodeSectionIndex = writeCodeSection(Asm, Layout, Functions);
     DataSectionIndex = writeDataSection(Layout);
   }
@@ -1892,8 +1897,11 @@ uint64_t WasmObjectWriter::writeOneObject(MCAssembler &Asm,
       }
     }
   }
-  for (auto &CustomSection : CustomSections)
-    writeCustomSection(CustomSection, Asm, Layout);
+  for (auto &CustomSection : CustomSections) {
+    if (!CustomSection.Name.startswith("code_annotation.")) {
+      writeCustomSection(CustomSection, Asm, Layout);
+    }
+  }
 
   if (Mode != DwoMode::DwoOnly) {
     writeLinkingMetaDataSection(SymbolInfos, InitFuncs, Comdats);
